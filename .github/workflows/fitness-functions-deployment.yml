@@ -1,0 +1,51 @@
+name: Deployment Fitness Functions
+
+on:
+  workflow_run:
+    workflows: ["Deploy to Production"]
+    types:
+      - completed
+
+jobs:
+  post-deployment-fitness-check:
+    name: "Post-Deployment Fitness Validation"
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    
+    steps:
+    - name: Wait for deployment stabilization
+      run: sleep 30
+    
+    - name: Check production search performance
+      env:
+        PROD_URL: ${{ secrets.PRODUCTION_URL || 'https://paperly-api.utec.edu.pe' }}
+      run: |
+        # Test production search performance
+        for i in {1..5}; do
+          start_time=$(date +%s.%3N)
+          response=$(curl -s -w "%{http_code}" "$PROD_URL/api/v1/search?q=test" -o /dev/null)
+          end_time=$(date +%s.%3N)
+          duration=$(echo "($end_time - $start_time) * 1000" | bc)
+          
+          echo "Test $i: ${duration}ms (HTTP $response)"
+          
+          if (( $(echo "$duration > 3000" | bc -l) )); then
+            echo "❌ Production search performance degraded: ${duration}ms > 3000ms"
+            exit 1
+          fi
+        done
+        echo "✅ Production search performance validated"
+    
+    - name: Validate production health
+      env:
+        PROD_URL: ${{ secrets.PRODUCTION_URL || 'https://paperly-api.utec.edu.pe' }}
+      run: |
+        health_response=$(curl -s "$PROD_URL/api/v1/health")
+        status=$(echo $health_response | jq -r '.status')
+        
+        if [ "$status" != "healthy" ]; then
+          echo "❌ Production health check failed: $status"
+          exit 1
+        fi
+        
+        echo "✅ Production health validated: $status"

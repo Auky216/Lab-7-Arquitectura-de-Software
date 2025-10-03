@@ -1,0 +1,337 @@
+name: Fitness Functions CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 */6 * * *'  # Every 6 hours
+
+jobs:
+  fitness-function-1-search-performance:
+    name: "Fitness Function 1: Search Performance < 200ms"
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install pytest requests
+    
+    - name: Start application
+      run: |
+        python main.py &
+        sleep 10  # Wait for startup
+      env:
+        JWT_SECRET: test-secret-key
+    
+    - name: Run Search Performance Test
+      run: |
+        python -c "
+        import requests
+        import time
+        import json
+        import sys
+        
+        # Login to get token
+        login_response = requests.post('http://localhost:3000/api/v1/auth/login', 
+                                     json={'email': 'student@utec.edu.pe', 'password': 'password123'})
+        token = login_response.json()['access_token']
+        headers = {'Authorization': f'Bearer {token}'}
+        
+        # Test search performance
+        search_queries = [
+            'machine learning',
+            'deep learning', 
+            'artificial intelligence',
+            'neural networks',
+            'reinforcement learning'
+        ]
+        
+        violations = 0
+        total_tests = 0
+        results = []
+        
+        for query in search_queries:
+            for page in [1, 2]:  # Test pagination
+                start_time = time.time()
+                response = requests.get(f'http://localhost:3000/api/v1/search',
+                                      params={'q': query, 'page': page, 'limit': 20},
+                                      headers=headers)
+                duration_ms = (time.time() - start_time) * 1000
+                
+                total_tests += 1
+                results.append({
+                    'query': query,
+                    'page': page,
+                    'duration_ms': round(duration_ms, 2),
+                    'status_code': response.status_code,
+                    'violation': duration_ms > 200
+                })
+                
+                if duration_ms > 200:
+                    violations += 1
+                    print(f'❌ VIOLATION: Search \"{query}\" page {page} took {duration_ms:.2f}ms > 200ms threshold')
+                else:
+                    print(f'✅ PASS: Search \"{query}\" page {page} took {duration_ms:.2f}ms')
+        
+        # Calculate metrics
+        avg_duration = sum(r['duration_ms'] for r in results) / len(results)
+        p95_duration = sorted([r['duration_ms'] for r in results])[int(len(results) * 0.95)]
+        violation_rate = (violations / total_tests) * 100
+        
+        print(f'\n📊 SEARCH PERFORMANCE SUMMARY:')
+        print(f'Total tests: {total_tests}')
+        print(f'Violations: {violations}')
+        print(f'Violation rate: {violation_rate:.1f}%')
+        print(f'Average duration: {avg_duration:.2f}ms')
+        print(f'P95 duration: {p95_duration:.2f}ms')
+        
+        # Fitness function criteria
+        if violation_rate > 10:  # Max 10% violation rate allowed
+            print(f'❌ FITNESS FUNCTION FAILED: {violation_rate:.1f}% > 10% violation rate')
+            sys.exit(1)
+        elif p95_duration > 200:
+            print(f'❌ FITNESS FUNCTION FAILED: P95 {p95_duration:.2f}ms > 200ms threshold')
+            sys.exit(1)
+        else:
+            print(f'✅ FITNESS FUNCTION PASSED: Search performance within acceptable limits')
+        "
+    
+    - name: Generate Performance Report
+      if: always()
+      run: |
+        echo "## Search Performance Fitness Function Results" >> $GITHUB_STEP_SUMMARY
+        echo "- **Threshold**: < 200ms for 90% of requests" >> $GITHUB_STEP_SUMMARY
+        echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Timestamp**: $(date)" >> $GITHUB_STEP_SUMMARY
+
+  fitness-function-2-data-integrity:
+    name: "Fitness Function 2: Metadata Consistency ≥ 99.5%"
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install pytest requests
+    
+    - name: Start application
+      run: |
+        python main.py &
+        sleep 10  # Wait for startup
+      env:
+        JWT_SECRET: test-secret-key
+    
+    - name: Run Data Integrity Test
+      run: |
+        python -c "
+        import requests
+        import json
+        import sys
+        import re
+        from urllib.parse import urlparse
+        
+        # Login as admin
+        login_response = requests.post('http://localhost:3000/api/v1/auth/login', 
+                                     json={'email': 'admin@utec.edu.pe', 'password': 'admin123'})
+        token = login_response.json()['access_token']
+        headers = {'Authorization': f'Bearer {token}'}
+        
+        # Get all papers
+        response = requests.get('http://localhost:3000/api/v1/search',
+                              params={'limit': 100},
+                              headers=headers)
+        papers = response.json()['data']
+        
+        total_papers = len(papers)
+        integrity_issues = 0
+        issue_details = []
+        
+        print(f'📊 Analyzing {total_papers} papers for metadata integrity...')
+        
+        for paper in papers:
+            issues_found = []
+            
+            # Check required fields
+            if not paper.get('title') or len(paper['title'].strip()) < 5:
+                issues_found.append('Invalid title')
+            
+            if not paper.get('authors') or len(paper['authors']) == 0:
+                issues_found.append('Missing authors')
+            
+            if not paper.get('year') or paper['year'] < 1900 or paper['year'] > 2025:
+                issues_found.append('Invalid year')
+            
+            # Check DOI format
+            doi = paper.get('doi')
+            if doi and not (doi.startswith('10.') or doi.startswith('arxiv:')):
+                issues_found.append('Invalid DOI format')
+            
+            # Check for duplicate detection
+            if paper.get('id') == paper.get('doi'):  # Basic duplicate check
+                pass  # OK
+            elif not paper.get('id'):
+                issues_found.append('Missing paper ID')
+            
+            # Check citation count validity
+            if paper.get('citation_count', 0) < 0:
+                issues_found.append('Invalid citation count')
+            
+            # Check journal field
+            if not paper.get('journal'):
+                issues_found.append('Missing journal')
+            
+            if issues_found:
+                integrity_issues += 1
+                issue_details.append({
+                    'paper_id': paper.get('id', 'unknown'),
+                    'title': paper.get('title', 'unknown')[:50],
+                    'issues': issues_found
+                })
+        
+        # Calculate integrity percentage
+        valid_papers = total_papers - integrity_issues
+        integrity_percentage = (valid_papers / total_papers) * 100 if total_papers > 0 else 0
+        
+        print(f'\n📊 METADATA INTEGRITY SUMMARY:')
+        print(f'Total papers analyzed: {total_papers}')
+        print(f'Papers with issues: {integrity_issues}')
+        print(f'Valid papers: {valid_papers}')
+        print(f'Integrity percentage: {integrity_percentage:.2f}%')
+        
+        # Show details of issues
+        if issue_details:
+            print(f'\n❌ ISSUES FOUND:')
+            for detail in issue_details[:5]:  # Show first 5 issues
+                print(f'  - {detail[\"paper_id\"]}: {detail[\"title\"]} - {detail[\"issues\"]}')
+            if len(issue_details) > 5:
+                print(f'  ... and {len(issue_details) - 5} more issues')
+        
+        # Fitness function criteria: ≥ 99.5% metadata consistency
+        threshold = 99.5
+        if integrity_percentage < threshold:
+            print(f'❌ FITNESS FUNCTION FAILED: {integrity_percentage:.2f}% < {threshold}% threshold')
+            sys.exit(1)
+        else:
+            print(f'✅ FITNESS FUNCTION PASSED: Metadata integrity {integrity_percentage:.2f}% ≥ {threshold}%')
+        "
+    
+    - name: Test Citation Graph Integrity
+      run: |
+        python -c "
+        import requests
+        import json
+        import sys
+        
+        # Login
+        login_response = requests.post('http://localhost:3000/api/v1/auth/login', 
+                                     json={'email': 'admin@utec.edu.pe', 'password': 'admin123'})
+        token = login_response.json()['access_token']
+        headers = {'Authorization': f'Bearer {token}'}
+        
+        # Get sample papers and test citations
+        response = requests.get('http://localhost:3000/api/v1/search',
+                              params={'limit': 10},
+                              headers=headers)
+        papers = response.json()['data']
+        
+        valid_citation_links = 0
+        total_citation_tests = 0
+        
+        for paper in papers[:3]:  # Test first 3 papers
+            paper_id = paper['id']
+            
+            # Test citations endpoint
+            try:
+                citations_response = requests.get(f'http://localhost:3000/api/v1/papers/{paper_id}/citations',
+                                                headers=headers)
+                if citations_response.status_code == 200:
+                    valid_citation_links += 1
+                total_citation_tests += 1
+            except:
+                total_citation_tests += 1
+            
+            # Test references endpoint  
+            try:
+                refs_response = requests.get(f'http://localhost:3000/api/v1/papers/{paper_id}/references',
+                                           headers=headers)
+                if refs_response.status_code == 200:
+                    valid_citation_links += 1
+                total_citation_tests += 1
+            except:
+                total_citation_tests += 1
+        
+        citation_integrity = (valid_citation_links / total_citation_tests) * 100 if total_citation_tests > 0 else 0
+        
+        print(f'\n📊 CITATION GRAPH INTEGRITY:')
+        print(f'Citation tests: {total_citation_tests}')
+        print(f'Valid links: {valid_citation_links}')
+        print(f'Citation integrity: {citation_integrity:.1f}%')
+        
+        # Requirement: > 98% valid edges
+        if citation_integrity < 98:
+            print(f'❌ CITATION INTEGRITY FAILED: {citation_integrity:.1f}% < 98%')
+            sys.exit(1)
+        else:
+            print(f'✅ CITATION INTEGRITY PASSED: {citation_integrity:.1f}% ≥ 98%')
+        "
+    
+    - name: Generate Data Integrity Report
+      if: always()
+      run: |
+        echo "## Data Integrity Fitness Function Results" >> $GITHUB_STEP_SUMMARY
+        echo "- **Metadata Threshold**: ≥ 99.5% valid papers" >> $GITHUB_STEP_SUMMARY
+        echo "- **Citation Threshold**: ≥ 98% valid citation links" >> $GITHUB_STEP_SUMMARY
+        echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Timestamp**: $(date)" >> $GITHUB_STEP_SUMMARY
+
+  fitness-functions-report:
+    name: "Fitness Functions Summary Report"
+    needs: [fitness-function-1-search-performance, fitness-function-2-data-integrity]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+    - name: Generate Summary Report
+      run: |
+        echo "# 🎯 Fitness Functions Execution Report" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## Results Summary" >> $GITHUB_STEP_SUMMARY
+        echo "| Fitness Function | Status | Threshold |" >> $GITHUB_STEP_SUMMARY
+        echo "|------------------|--------|-----------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Search Performance | ${{ needs.fitness-function-1-search-performance.result }} | < 200ms (90% requests) |" >> $GITHUB_STEP_SUMMARY
+        echo "| Data Integrity | ${{ needs.fitness-function-2-data-integrity.result }} | ≥ 99.5% metadata + 98% citations |" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## Architecture Compliance" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ **Performance**: Search response time monitoring" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ **Reliability**: Metadata consistency validation" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ **Availability**: Citation graph integrity check" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "---" >> $GITHUB_STEP_SUMMARY
+        echo "*Executed on: $(date)*" >> $GITHUB_STEP_SUMMARY
+        echo "*Branch: ${{ github.ref_name }}*" >> $GITHUB_STEP_SUMMARY
+        echo "*Commit: ${{ github.sha }}*" >> $GITHUB_STEP_SUMMARY
+    
+    - name: Fail if any fitness function failed
+      if: needs.fitness-function-1-search-performance.result == 'failure' || needs.fitness-function-2-data-integrity.result == 'failure'
+      run: |
+        echo "❌ One or more fitness functions failed"
+        exit 1
