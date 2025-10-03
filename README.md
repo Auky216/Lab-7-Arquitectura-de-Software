@@ -270,8 +270,8 @@ The project includes automated fitness function testing via GitHub Actions:
 ## Team
 
 **GYKTEAM**
-- Angel Gabriel Mucha Huaman
-- Jean Pierre Gabriel Sotomayor Cavero
+- Adrian Antonio Auqui Perez
+- Jose Barrenchea Merino
 
 **Institution**: Universidad de Ingeniería y Tecnología (UTEC)
 **Course**: Software Architecture - 2025-II
