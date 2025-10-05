@@ -11,3 +11,13 @@ aiosqlite==0.19.0
 pydantic[email]==2.5.0
 pydantic-settings==2.1.0
 requests==2.31.0
+alembic
+databases
+Mako
+pydantic
+pydantic-core
+pydantic-settings
+watchfiles
+email-validator
+asyncpg
+orjson 
